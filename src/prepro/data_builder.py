@@ -31,25 +31,27 @@ def recover_from_corenlp(s):
 
 
 
-def load_json(p, lower):
+def load_json(p, lower=False):
     source = []
     tgt = []
     flag = False
     for sent in json.load(open(p))['sentences']:
         tokens = [t['word'] for t in sent['tokens']]
-        if (lower):
-            tokens = [t.lower() for t in tokens]
+        # if (lower):
+            # tokens = [t.lower() for t in tokens]
         if (tokens[0] == '@highlight'):
             flag = True
-            tgt.append([])
+            # tgt.append([])
             continue
         if (flag):
-            tgt[-1].extend(tokens)
+            tgt.append(tokens)
+            # tgt[-1].extend(tokens)
         else:
             source.append(tokens)
 
     source = [clean(' '.join(sent)).split() for sent in source]
     tgt = [clean(' '.join(sent)).split() for sent in tgt]
+    # print(source, tgt)
     return source, tgt
 
 
@@ -175,7 +177,7 @@ def greedy_selection(doc_sent_list, abstract_sent_list, summary_size):
     for s in range(summary_size):
         cur_max_rouge = max_rouge
         cur_id = -1
-        for i in range(len(sents)):
+        for i in range(len(sents)): #source
             if (i in selected):
                 continue
             c = selected + [i]
@@ -186,6 +188,7 @@ def greedy_selection(doc_sent_list, abstract_sent_list, summary_size):
             rouge_1 = cal_rouge(candidates_1, reference_1grams)['f']
             rouge_2 = cal_rouge(candidates_2, reference_2grams)['f']
             rouge_score = rouge_1 + rouge_2
+            # print(rouge_score)
             if rouge_score > cur_max_rouge:
                 cur_max_rouge = rouge_score
                 cur_id = i
@@ -194,7 +197,7 @@ def greedy_selection(doc_sent_list, abstract_sent_list, summary_size):
         selected.append(cur_id)
         max_rouge = cur_max_rouge
 
-    return sorted(selected)
+    return selected #sorted(selected)
 
 
 def hashhex(s):
@@ -329,56 +332,86 @@ def _format_to_bert(params):
 
 
 def format_to_lines(args):
-    corpus_mapping = {}
-    for corpus_type in ['valid', 'test', 'train']:
-        temp = []
-        for line in open(pjoin(args.map_path, 'mapping_' + corpus_type + '.txt')):
-            temp.append(hashhex(line.strip()))
-        corpus_mapping[corpus_type] = {key.strip(): 1 for key in temp}
+#    corpus_mapping = {}
+#    for corpus_type in ['valid', 'test', 'train']:
+#        temp = []
+#        for line in open(pjoin(args.map_path, 'mapping_' + corpus_type + '.txt')):
+#            temp.append(hashhex(line.strip()))
+#        corpus_mapping[corpus_type] = {key.strip(): 1 for key in temp}
     train_files, valid_files, test_files = [], [], []
-    for f in glob.glob(pjoin(args.raw_path, '*.json')):
-        real_name = f.split('/')[-1].split('.')[0]
-        if (real_name in corpus_mapping['valid']):
-            valid_files.append(f)
-        elif (real_name in corpus_mapping['test']):
-            test_files.append(f)
-        elif (real_name in corpus_mapping['train']):
-            train_files.append(f)
+#    for f in glob.glob(pjoin(args.raw_path, '*.json')):
+#        real_name = f.split('/')[-1].split('.')[0]
+#        if (real_name in corpus_mapping['valid']):
+#            valid_files.append(f)
+#        elif (real_name in corpus_mapping['test']):
+#            test_files.append(f)
+#        elif (real_name in corpus_mapping['train']):
+#            train_files.append(f)
         # else:
         #     train_files.append(f)
-
-    corpora = {'train': train_files, 'valid': valid_files, 'test': test_files}
-    for corpus_type in ['train', 'valid', 'test']:
+    cur = 0
+    valid_test_ratio = 0.0
+    all_size = len(glob.glob(pjoin(args.raw_path, '*.json')))
+    for f in glob.glob(pjoin(args.raw_path, '*.json')):
+        real_name = f.split('/')[-1].split('.')[0]
+        # print(real_name)
+        # if (cur < valid_test_ratio*all_size):
+        # valid_files.append(f)
+        # elif (cur < valid_test_ratio*2*all_size):
+        train_files.append(f)
+        # else:
+            # train_files.append(f)
+        cur += 1
+        if cur%10000==0:
+            print("File", cur)
+    corpora = {'train': train_files, 'val': valid_files, 'test': test_files}
+    for corpus_type in ['train', 'val', 'test']:
         a_lst = [(f, args) for f in corpora[corpus_type]]
         pool = Pool(args.n_cpus)
         dataset = []
         p_ct = 0
+        # print(a_lst)
+        # global vocab_counter
+        # vocab_counter = collections.Counter()
         for d in pool.imap_unordered(_format_to_lines, a_lst):
             dataset.append(d)
+            # print(d)
             if (len(dataset) > args.shard_size):
-                pt_file = "{:s}.{:s}.{:d}.json".format(args.save_path, corpus_type, p_ct)
+                pt_file = "{:s}{:s}{:d}.json".format(args.save_path, corpus_type, p_ct)
                 with open(pt_file, 'w') as save:
                     # save.write('\n'.join(dataset))
                     save.write(json.dumps(dataset))
+                    if p_ct%10000==0:
+                        print(pt_file)
                     p_ct += 1
                     dataset = []
 
         pool.close()
         pool.join()
         if (len(dataset) > 0):
-            pt_file = "{:s}.{:s}.{:d}.json".format(args.save_path, corpus_type, p_ct)
+            pt_file = "{:s}{:s}.{:d}.json".format(args.save_path, corpus_type, p_ct)
             with open(pt_file, 'w') as save:
                 # save.write('\n'.join(dataset))
                 save.write(json.dumps(dataset))
                 p_ct += 1
                 dataset = []
 
+        # print("Writing vocab file...")
+        # with open(os.path.join("./", "vocab_cnt.pkl"),
+                  # 'wb') as vocab_file:
+            # pkl.dump(vocab_counter, vocab_file)
+        # print("Finished writing vocab file")
+
 
 def _format_to_lines(params):
     f, args = params
-    print(f)
+    # print(f)
     source, tgt = load_json(f, args.lower)
-    return {'src': source, 'tgt': tgt}
+    # print()
+    # vocab_counter.update(tokens)
+    source = [" ".join(sent) for sent in source]
+    tgt = [" ".join(sent) for sent in tgt]
+    return {'article': source, 'abstract': tgt}
 
 
 
@@ -406,6 +439,7 @@ def format_xsum_to_lines(args):
             if (d is None):
                 continue
             dataset.append(d)
+            # print(d)
             if (len(dataset) > args.shard_size):
                 pt_file = "{:s}.{:s}.{:d}.json".format(args.save_path, corpus_type, p_ct)
                 with open(pt_file, 'w') as save:
