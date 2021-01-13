@@ -21,7 +21,7 @@ from others.utils import clean
 from prepro.utils import _get_word_ngrams
 
 import xml.etree.ElementTree as ET
-
+from cytoolz import curry
 nyt_remove_words = ["photo", "graph", "chart", "map", "table", "drawing"]
 
 
@@ -188,7 +188,7 @@ def greedy_selection(doc_sent_list, abstract_sent_list, summary_size):
             rouge_1 = cal_rouge(candidates_1, reference_1grams)['f']
             rouge_2 = cal_rouge(candidates_2, reference_2grams)['f']
             rouge_score = rouge_1 + rouge_2
-            # print(rouge_score)
+            # print(cur_max_rouge)
             if rouge_score > cur_max_rouge:
                 cur_max_rouge = rouge_score
                 cur_id = i
@@ -197,8 +197,156 @@ def greedy_selection(doc_sent_list, abstract_sent_list, summary_size):
         selected.append(cur_id)
         max_rouge = cur_max_rouge
 
+    # print("output", selected)
+    # if not selected:
+        # print("empty selected")
+        # selected.append(0)
     return selected #sorted(selected)
 
+def presumm_reward(doc_sent_list, abstract_sent_list, n_sents=10):
+    def _rouge_clean(s):
+        return re.sub(r'[^a-zA-Z0-9 ]', '', s)
+
+    max_rouge = 0.0
+    abstract = sum(abstract_sent_list, [])
+    abstract = _rouge_clean(' '.join(abstract)).split()
+    sents = [_rouge_clean(' '.join(s)).split() for s in doc_sent_list]
+    evaluated_1grams = [_get_word_ngrams(1, [sent]) for sent in sents]
+    reference_1grams = _get_word_ngrams(1, [abstract])
+    evaluated_2grams = [_get_word_ngrams(2, [sent]) for sent in sents]
+    reference_2grams = _get_word_ngrams(2, [abstract])
+
+    selected = []
+    rwds = [0]
+    # cur_max_rouge = max_rouge
+    # cur_id = -1
+    for i in range(len(sents)): #source
+        # if (i in selected):
+            # continue
+        # c = selected + [i]
+        # candidates_1 = [evaluated_1grams[idx] for idx in c]
+        # candidates_1 = set.union(*map(set, candidates_1))
+        # candidates_2 = [evaluated_2grams[idx] for idx in c]
+        # candidates_2 = set.union(*map(set, candidates_2))
+        # rouge_1 = cal_rouge(candidates_1, reference_1grams)['f']
+        # rouge_2 = cal_rouge(candidates_2, reference_2grams)['f']
+        if i < n_sents:
+            rouge_1 = cal_rouge(evaluated_1grams[i], reference_1grams)['f']
+            rouge_2 = cal_rouge(evaluated_2grams[i], reference_2grams)['f']
+            rouge_score = rouge_1 + rouge_2
+        else:
+            rouge_score = 0
+        rwds.append(rouge_score)
+
+    return rwds[1:]
+
+def presumm_reward2(doc_sent_list, abstract_sent_list, n_sents=3):
+    def _rouge_clean(s):
+        return re.sub(r'[^a-zA-Z0-9 ]', '', s)
+
+    max_rouge = 0.0
+    abstract = sum(abstract_sent_list, [])
+    abstract = _rouge_clean(' '.join(abstract)).split()
+    sents = [_rouge_clean(' '.join(s)).split() for s in doc_sent_list]
+    evaluated_1grams = [_get_word_ngrams(1, [sent]) for sent in sents]
+    reference_1grams = _get_word_ngrams(1, [abstract])
+    evaluated_2grams = [_get_word_ngrams(2, [sent]) for sent in sents]
+    reference_2grams = _get_word_ngrams(2, [abstract])
+
+    selected = []
+    rwds = [0]
+    prev_sc = 0
+    # cur_max_rouge = max_rouge
+    # cur_id = -1
+    for i in range(len(sents)): #source
+        # if (i >= n_sents):
+        #     continue
+        c = selected + [i]
+        candidates_1 = [evaluated_1grams[idx] for idx in c]
+        candidates_1 = set.union(*map(set, candidates_1))
+        candidates_2 = [evaluated_2grams[idx] for idx in c]
+        candidates_2 = set.union(*map(set, candidates_2))
+        rouge_1 = cal_rouge(candidates_1, reference_1grams)['f']
+        rouge_2 = cal_rouge(candidates_2, reference_2grams)['f']
+        if i < n_sents:
+            rouge_score = rouge_1 + rouge_2 - prev_sc
+        else:
+            rouge_score = 0
+        prev_sc = rouge_1 + rouge_2
+        rwds.append(rouge_score)
+
+    return rwds[1:]
+
+def presumm_reward3(doc_sent_list, abstract_sent_list, mode='f'):
+    def _rouge_clean(s):
+        return re.sub(r'[^a-zA-Z0-9 ]', '', s)
+
+    max_rouge = 0.0
+    abstract = sum(abstract_sent_list, [])
+    abstract = _rouge_clean(' '.join(abstract)).split()
+    sents = [_rouge_clean(' '.join(s)).split() for s in doc_sent_list]
+    evaluated_1grams = [_get_word_ngrams(1, [sent]) for sent in sents]
+    reference_1grams = _get_word_ngrams(1, [abstract])
+    evaluated_2grams = [_get_word_ngrams(2, [sent]) for sent in sents]
+    reference_2grams = _get_word_ngrams(2, [abstract])
+
+    selected = []
+    rwds = []
+    prev_sc = 0
+    # cur_max_rouge = max_rouge
+    # cur_id = -1
+    for i in range(len(sents)): #source
+        # if (i in selected):
+        #     continue
+        c = selected + [i]
+        candidates_1 = [evaluated_1grams[idx] for idx in c]
+        candidates_1 = set.union(*map(set, candidates_1))
+        candidates_2 = [evaluated_2grams[idx] for idx in c]
+        candidates_2 = set.union(*map(set, candidates_2))
+        rouge_1 = cal_rouge(candidates_1, reference_1grams)[mode]
+        rouge_2 = cal_rouge(candidates_2, reference_2grams)[mode]
+        rouge_score = rouge_1 + rouge_2 - prev_sc #max with it 0, use the r version, give -0.1, -0.2 ... for EOE
+        rwds.append(rouge_score + 1)
+        prev_sc = rouge_1 + rouge_2
+
+    return rwds
+
+def presumm_reward4(doc_sent_list, abstract_sent_list, n_sents=10):
+    def _rouge_clean(s):
+        return re.sub(r'[^a-zA-Z0-9 ]', '', s)
+
+    max_rouge = 0.0
+    abstract = sum(abstract_sent_list, [])
+    abstract = _rouge_clean(' '.join(abstract)).split()
+    sents = [_rouge_clean(' '.join(s)).split() for s in doc_sent_list]
+    evaluated_1grams = [_get_word_ngrams(1, [sent]) for sent in sents]
+    reference_1grams = _get_word_ngrams(1, [abstract])
+    evaluated_2grams = [_get_word_ngrams(2, [sent]) for sent in sents]
+    reference_2grams = _get_word_ngrams(2, [abstract])
+
+    selected = []
+    rwds = [0]
+    # cur_max_rouge = max_rouge
+    # cur_id = -1
+    for i in range(len(sents)): #source
+        # if (i in selected):
+            # continue
+        # c = selected + [i]
+        # candidates_1 = [evaluated_1grams[idx] for idx in c]
+        # candidates_1 = set.union(*map(set, candidates_1))
+        # candidates_2 = [evaluated_2grams[idx] for idx in c]
+        # candidates_2 = set.union(*map(set, candidates_2))
+        # rouge_1 = cal_rouge(candidates_1, reference_1grams)['f']
+        # rouge_2 = cal_rouge(candidates_2, reference_2grams)['f']
+        if i < n_sents:
+            rouge_1 = 0 #cal_rouge(evaluated_1grams[i], reference_1grams)['f']
+            rouge_2 = cal_rouge(evaluated_2grams[i], reference_2grams)['f']
+            rouge_score = rouge_1 + rouge_2
+        else:
+            rouge_score = 0
+        rwds.append(rouge_score)
+
+    return rwds[1:]
 
 def hashhex(s):
     """Returns a heximal formated SHA1 hash of the input string."""
@@ -222,8 +370,9 @@ class BertData():
         self.cls_vid = self.tokenizer.vocab[self.cls_token]
         self.pad_vid = self.tokenizer.vocab[self.pad_token]
 
-    def preprocess(self, src, tgt, sent_labels, use_bert_basic_tokenizer=False, is_test=False):
-
+    def preprocess(self, src, tgt, sent_labels, use_bert_basic_tokenizer=False, is_test=False, order=False):
+        temp = [[j, i] for i, j in enumerate(sent_labels)]
+        # print("hi", sent_labels, temp)
         if ((not is_test) and len(src) == 0):
             return None
 
@@ -232,14 +381,22 @@ class BertData():
         idxs = [i for i, s in enumerate(src) if (len(s) > self.args.min_src_ntokens_per_sent)]
 
         _sent_labels = [0] * len(src)
+        _temp = [[0, -1]] * len(src)
         for l in sent_labels:
             _sent_labels[l] = 1
+        for l, idx in temp:
+            _temp[l] = [1, idx]
 
         src = [src[i][:self.args.max_src_ntokens_per_sent] for i in idxs]
         sent_labels = [_sent_labels[i] for i in idxs]
+        temp = []
+        for ni, oi in enumerate(idxs):
+            if _temp[oi][0] == 1:
+                temp.append([ni, _temp[oi][1]])
         src = src[:self.args.max_src_nsents]
+        temp = [p for p in temp if p[0] < self.args.max_src_nsents]
         sent_labels = sent_labels[:self.args.max_src_nsents]
-
+        # print("HI2", sent_labels, temp)
         if ((not is_test) and len(src) < self.args.min_src_nsents):
             return None
 
@@ -260,6 +417,7 @@ class BertData():
                 segments_ids += s * [1]
         cls_ids = [i for i, t in enumerate(src_subtoken_idxs) if t == self.cls_vid]
         sent_labels = sent_labels[:len(cls_ids)]
+        temp = [p for p in temp if p[0] < len(cls_ids)]
 
         tgt_subtokens_str = '[unused0] ' + ' [unused2] '.join(
             [' '.join(self.tokenizer.tokenize(' '.join(tt), use_bert_basic_tokenizer=use_bert_basic_tokenizer)) for tt in tgt]) + ' [unused1]'
@@ -271,7 +429,11 @@ class BertData():
 
         tgt_txt = '<q>'.join([' '.join(tt) for tt in tgt])
         src_txt = [original_src_txt[i] for i in idxs]
-
+        temp = sorted(temp, key=lambda x: x[1])
+        temp = [x[0] for x in temp]
+        # print("bye", sent_labels, temp)
+        if order:
+            return src_subtoken_idxs, sent_labels, tgt_subtoken_idxs, segments_ids, cls_ids, src_txt, tgt_txt, temp
         return src_subtoken_idxs, sent_labels, tgt_subtoken_idxs, segments_ids, cls_ids, src_txt, tgt_txt
 
 

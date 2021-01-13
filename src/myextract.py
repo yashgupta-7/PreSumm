@@ -130,12 +130,16 @@ args_train.test_batch_size = 500
 args_train.model_path  =  "../bertext_ckpt/"
 args_train.sep_optim  = True
 args_train.use_interval = True
-args_train.visible_gpus = "1"
+args_train.visible_gpus = os.environ["CUDA_VISIBLE_DEVICES"] #"3"
 args_train.max_pos = 512
 args_train.max_length = 200
 args_train.alpha = 0.95
 args_train.min_length = 50
-args_train.finetune_bert = False
+if os.environ["FB"] == "1":
+    args_train.finetune_bert = True
+else:
+    args_train.finetune_bert = False
+print("Finetuning BERT?", args_train.finetune_bert)
 args_train.test_from = "/exp/yashgupta/PreSumm/bertext_ckpt/bertext_cnndm_transformer.pt"
 args_train.gpu_ranks = [int(i) for i in range(len(args_train.visible_gpus.split(',')))]
 args_train.world_size = len(args_train.gpu_ranks)
@@ -158,7 +162,7 @@ device = "cpu" if args_train.visible_gpus == '-1' else "cuda"
 ########################################################################################################
 ########################################################################################################
 
-def preprocess(args, ex, is_test):
+def preprocess(args, ex, is_test, order=False):
         src = ex['src']
         tgt = ex['tgt'][:args.max_tgt_len][:-1]+[2]
         src_sent_labels = ex['src_sent_labels']
@@ -176,6 +180,8 @@ def preprocess(args, ex, is_test):
         src_sent_labels = src_sent_labels[:max_sent_id]
         clss = clss[:max_sent_id]
         # src_txt = src_txt[:max_sent_id]
+        if (is_test and order):
+            return src, tgt, segs, clss, src_sent_labels, [x for x in ex["ord_labels"] if x < max_sent_id], src_txt, tgt_txt
         if(is_test):
             return src, tgt, segs, clss, src_sent_labels, src_txt, tgt_txt
         else:
@@ -259,27 +265,29 @@ def get_batch(raw_srcs, raw_tgts, is_test = True, n_ext=3):
     batch = models.data_loader.Batch(batch, device, is_test)
     return batch
 
-def get_batch_trans(t_batch, is_test = True, n_ext=3):
+def get_batch_trans(t_batch, is_test = True, n_ext=5):
+    # print(t_batch)
     dataset = []
     for source, tgt in t_batch: #zip(raw_srcs, raw_tgts):
         source = [s.split(" ") for s in source]
-        tgt = [source[s] for s in tgt] #[s.split(" ") for s in tgt]
+        tgt =  [s.split(" ") for s in tgt] #[source[s] for s in tgt]
+        # print(source, tgt)
         sent_labels = greedy_selection(source[:args_bert.max_src_nsents], tgt, n_ext)
         # print(sent_labels)
         if (args_bert.lower):
             source = [' '.join(s).lower().split() for s in source]
             tgt = [' '.join(s).lower().split() for s in tgt]
         b_data = bert.preprocess(source, tgt, sent_labels, use_bert_basic_tokenizer=args_bert.use_bert_basic_tokenizer,
-                                is_test=is_test)
-        src_subtoken_idxs, sent_labels, tgt_subtoken_idxs, segments_ids, cls_ids, src_txt, tgt_txt = b_data
+                                is_test=is_test, order=True)
+        src_subtoken_idxs, sent_labels, tgt_subtoken_idxs, segments_ids, cls_ids, src_txt, tgt_txt, ord_labels = b_data
         b_data_dict = {"src": src_subtoken_idxs, "tgt": tgt_subtoken_idxs,
                     "src_sent_labels": sent_labels, "segs": segments_ids, 'clss': cls_ids,
-                    'src_txt': src_txt, "tgt_txt": tgt_txt}
+                    'src_txt': src_txt, "tgt_txt": tgt_txt, "ord_labels": ord_labels}
         dataset.append(b_data_dict)
 
     batch = []  
     for ex in dataset:
-        ex = preprocess(args_train, ex, is_test)
+        ex = preprocess(args_train, ex, is_test, order=True)
         batch.append(ex)
-    batch = models.data_loader.Batch(batch, device, is_test)
+    batch = models.data_loader.Batch(batch, device, is_test, order=True)
     return batch

@@ -247,7 +247,7 @@ class AbsSummarizer(nn.Module):
         decoder_outputs, state = self.decoder(tgt[:, :-1], top_vec, dec_state)
         return decoder_outputs, None
 
-
+import os
 class ExtSummarizerNew(nn.Module):
     def __init__(self, args, device, checkpoint):
         super(ExtSummarizerNew, self).__init__()
@@ -282,6 +282,10 @@ class ExtSummarizerNew(nn.Module):
                         xavier_uniform_(p)
 
         self.to(device)
+        self.finetune = True
+        if os.environ["FT"] == "0":
+            self.finetune = False
+        print("Finetune Transformer?", self.finetune)
 
     def forward(self, src, segs, clss, mask_src, mask_cls):
         # print(src, src.shape)
@@ -290,6 +294,10 @@ class ExtSummarizerNew(nn.Module):
         sents_vec = top_vec[torch.arange(top_vec.size(0)).unsqueeze(1), clss]
         sents_vec = sents_vec * mask_cls[:, :, None].float()
         # print(sents_vec.shape)
-        sent_scores = self.ext_layer(sents_vec, mask_cls).squeeze(-1)
+        if self.finetune:
+            sent_scores = self.ext_layer(sents_vec, mask_cls).squeeze(-1)
+        else:
+            with torch.no_grad():
+                sent_scores = self.ext_layer(sents_vec, mask_cls).squeeze(-1)
         # print(sent_scores.shape)
         return sent_scores #, mask_cls
